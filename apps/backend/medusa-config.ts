@@ -8,6 +8,14 @@ const hasStripe =
   Boolean(process.env.STRIPE_API_KEY) &&
   Boolean(process.env.STRIPE_WEBHOOK_SECRET)
 
+// S3 / MinIO file storage — set all four vars to enable in production.
+// Without them, Medusa falls back to local disk storage automatically.
+const hasS3 =
+  Boolean(process.env.S3_BUCKET) &&
+  Boolean(process.env.S3_ACCESS_KEY_ID) &&
+  Boolean(process.env.S3_SECRET_ACCESS_KEY) &&
+  Boolean(process.env.S3_FILE_URL)
+
 // SSLCommerz — BD aggregator (cards, bKash, Nagad, Rocket, EMI)
 const hasSslcommerz =
   Boolean(process.env.SSLCOMMERZ_STORE_ID) &&
@@ -50,6 +58,32 @@ module.exports = defineConfig({
     {
       resolve: "./src/modules/authSettings",
     },
+    ...(hasS3
+      ? [
+          {
+            resolve: "@medusajs/medusa/file",
+            options: {
+              providers: [
+                {
+                  resolve: "@medusajs/file-s3",
+                  id: "s3",
+                  options: {
+                    file_url: process.env.S3_FILE_URL,
+                    access_key_id: process.env.S3_ACCESS_KEY_ID,
+                    secret_access_key: process.env.S3_SECRET_ACCESS_KEY,
+                    region: process.env.S3_REGION || "us-east-1",
+                    bucket: process.env.S3_BUCKET,
+                    endpoint: process.env.S3_ENDPOINT,
+                    additional_client_config: process.env.S3_ENDPOINT
+                      ? { forcePathStyle: true }
+                      : undefined,
+                  },
+                },
+              ],
+            },
+          },
+        ]
+      : []),
     {
       resolve: "@medusajs/medusa/fulfillment",
       options: {

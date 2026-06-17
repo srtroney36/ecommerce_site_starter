@@ -19,6 +19,10 @@ from your deploy work to what the client sets up themselves in the admin.
 ### Coolify deploy
 ```
 [ ] PostgreSQL resource created and running in Coolify
+[ ] MinIO resource created in Coolify:
+    [ ] Bucket created (e.g. medusa-store)
+    [ ] Bucket anonymous access set to public (via MinIO Console)
+    [ ] Endpoint, Access Key, Secret Key noted
 [ ] Backend app created — build: npm run build, start: npm run start, port: 9000
 [ ] Backend REQUIRED env vars set in Coolify:
     [ ] DATABASE_URL (from Coolify PostgreSQL resource)
@@ -29,6 +33,13 @@ from your deploy work to what the client sets up themselves in the admin.
     [ ] AUTH_CORS = https://api.acmeshop.com,https://shop.acmeshop.com
     [ ] APP_SECRETS_ENCRYPTION_KEY (openssl rand -hex 32 — BACKED UP in password manager)
     [ ] MEDUSA_ADMIN_ONBOARDING_TYPE = nextjs
+[ ] MinIO env vars set on backend:
+    [ ] S3_ENDPOINT = https://minio-xxxx.coolify.io
+    [ ] S3_BUCKET = medusa-store
+    [ ] S3_ACCESS_KEY_ID = (from Coolify MinIO resource)
+    [ ] S3_SECRET_ACCESS_KEY = (from Coolify MinIO resource)
+    [ ] S3_REGION = us-east-1
+    [ ] S3_FILE_URL = https://minio-xxxx.coolify.io/medusa-store
 [ ] Backend deployed and healthy (curl https://api.acmeshop.com/health → {"status":"ok"})
 ```
 

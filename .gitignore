@@ -45,6 +45,9 @@ yarn-error.log*
 # vercel
 .vercel
 
+# Local file uploads (Medusa local storage — committed files belong in MinIO, not git)
+apps/backend/static/
+
 # macOS system files
 .DS_Store
 .DS_Store?

@@ -27,6 +27,7 @@
     "@medusajs/cli": "2.15.5",
     "@medusajs/dashboard": "2.15.5",
     "@medusajs/draft-order": "2.15.5",
+    "@medusajs/file-s3": "^2.15.5",
     "@medusajs/framework": "2.15.5",
     "@medusajs/medusa": "2.15.5",
     "@medusajs/payment-stripe": "^2.15.5",

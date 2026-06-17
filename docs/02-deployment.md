@@ -2,6 +2,42 @@
 
 ---
 
+## 0. Local development setup
+
+Before deploying, run the stack locally to verify branding and configuration.
+
+### MinIO (local file storage)
+
+A `docker-compose.yml` at the repo root starts MinIO for local development:
+
+```bash
+docker compose up -d
+```
+
+| Service | URL | Notes |
+|---------|-----|-------|
+| MinIO S3 API | http://localhost:9100 | Used by the backend for uploads |
+| MinIO Console | http://localhost:9101 | Web UI — login: `minioadmin` / `minioadmin` |
+
+The `medusa-store` bucket is created automatically with public-read access.
+The backend `.env.example` already includes the matching `S3_*` vars for local MinIO.
+
+### Required env vars for local development
+
+Copy `.env.example` to `.env` in `apps/backend/` and fill in:
+
+```bash
+# Generate unique secrets — run each command once and paste the output
+openssl rand -hex 32    # → DATABASE URL password, JWT_SECRET, COOKIE_SECRET
+openssl rand -hex 32    # → APP_SECRETS_ENCRYPTION_KEY  (back this up!)
+```
+
+The `APP_SECRETS_ENCRYPTION_KEY` encrypts all admin-stored credentials (email, SMS,
+couriers, CAPI token, Google OAuth). **If you lose it, every admin-encrypted credential
+must be re-entered.** Store it somewhere safe from day one.
+
+---
+
 ## 1. Architecture
 
 ```
@@ -121,6 +157,38 @@ The admin UI is served automatically at `https://api.acmeshop.com/app`.
 6. Set storefront env vars (Section 5 below)
 7. Deploy **after** the backend is running (the build fetches regions/config from the backend)
 
+### 4d. MinIO (file storage — strongly recommended for production)
+
+Without MinIO, uploaded product images and other files are written to the container's
+local disk. They are **lost on every redeploy**. MinIO provides persistent S3-compatible
+object storage that survives redeployments.
+
+1. Coolify → **New Resource → Database → MinIO**
+2. Name it (e.g. `acmeshop-minio`) and deploy it
+3. From the Coolify resource page, copy:
+   - **Endpoint** (e.g. `https://minio-xxxx.coolify.io`)
+   - **Access Key**
+   - **Secret Key**
+4. Open the MinIO Console (Coolify exposes a console URL on the resource page)
+   - Log in with the Access Key / Secret Key
+   - Create a bucket (e.g. `medusa-store`)
+   - Bucket → **Anonymous Access → set to `public`** (so storefront can load images without signed URLs)
+5. Set these env vars on the **backend** app in Coolify (Section 5b):
+
+   | Variable | Value |
+   |----------|-------|
+   | `S3_ENDPOINT` | Coolify MinIO endpoint, e.g. `https://minio-xxxx.coolify.io` |
+   | `S3_BUCKET` | Your bucket name, e.g. `medusa-store` |
+   | `S3_ACCESS_KEY_ID` | MinIO Access Key from Coolify |
+   | `S3_SECRET_ACCESS_KEY` | MinIO Secret Key from Coolify |
+   | `S3_REGION` | `us-east-1` (any string — MinIO ignores it) |
+   | `S3_FILE_URL` | `{S3_ENDPOINT}/{S3_BUCKET}`, e.g. `https://minio-xxxx.coolify.io/medusa-store` |
+
+6. Redeploy the backend
+
+> **All six vars must be set together.** If any is missing, the backend falls back to
+> local disk storage automatically (no errors, but files are lost on redeploy).
+
 ### Redis (optional)
 
 If you want Redis, add a **Redis** database resource in Coolify and set `REDIS_URL`
@@ -190,6 +258,12 @@ Add them only when you are ready to enable that feature.
 | `BKASH_SANDBOX` | bKash sandbox mode | Default `true`; set to `false` for live |
 | `BACKEND_URL` | Builds payment callback URLs for SSLCommerz/bKash | e.g. `https://api.acmeshop.com` — required when using those providers |
 | `STORE_URL` | Used in email templates (logo URL, account links) | e.g. `https://shop.acmeshop.com` — only needed when email is configured |
+| `S3_FILE_URL` | MinIO / S3 file storage — public URL prefix for uploads | e.g. `https://minio.acmeshop.com/your-bucket` — all four `S3_*` vars must be set together to activate; local disk used otherwise |
+| `S3_BUCKET` | S3 / MinIO bucket name | |
+| `S3_ACCESS_KEY_ID` | S3 / MinIO access key | |
+| `S3_SECRET_ACCESS_KEY` | S3 / MinIO secret key | |
+| `S3_ENDPOINT` | MinIO server URL (omit for AWS S3) | e.g. `https://minio.acmeshop.com` — required for MinIO, omit for AWS S3 |
+| `S3_REGION` | AWS region or any string for MinIO | Defaults to `us-east-1` when absent |
 | `REDIS_URL` | Redis for event bus / job queue | e.g. `redis://localhost:6379` — in-memory fallback used when absent |
 | `MEDUSA_ADMIN_ONBOARDING_TYPE` | Suppresses admin onboarding wizard | Set to `nextjs` (already in `.env.example`) |
 
@@ -289,30 +363,35 @@ open https://shop.acmeshop.com                # should load the store
 
 2.  Coolify: create PostgreSQL resource  → note the DATABASE_URL
 
-3.  Coolify: create Backend app
+3.  Coolify: create MinIO resource  (see Section 4d)
+    → Create bucket (e.g. medusa-store)  → set anonymous access to public
+    → Note endpoint, access key, secret key
+
+4.  Coolify: create Backend app
     → Build: npm run build   Start: npm run start   Port: 9000
     → Set REQUIRED env vars (table 5a) incl. a FRESH APP_SECRETS_ENCRYPTION_KEY
     → Set CORS vars to the new store's domains
+    → Set all six S3_* vars (table 5b) pointing at the MinIO resource
     → Deploy
 
-4.  In Coolify terminal / SSH:
+5.  In Coolify terminal / SSH:
     npx medusa db:migrate
     npx medusa db:sync-links
     npx medusa user -e admin@... -p ...
 
-5.  Admin → Settings → API Keys → create publishable key  → copy pk_...
+6.  Admin → Settings → API Keys → create publishable key  → copy pk_...
 
-6.  Coolify: create Storefront app
+7.  Coolify: create Storefront app
     → Build: npm run build   Start: npm run start   Port: 8000
     → Set NEXT_PUBLIC_MEDUSA_BACKEND_URL, NEXT_PUBLIC_MEDUSA_PUBLISHABLE_KEY,
       NEXT_PUBLIC_DEFAULT_REGION, NEXT_PUBLIC_BASE_URL
     → Deploy
 
-7.  Admin → Settings → Regions → add region matching NEXT_PUBLIC_DEFAULT_REGION
+8.  Admin → Settings → Regions → add region matching NEXT_PUBLIC_DEFAULT_REGION
 
-8.  Verify: curl /health  →  open storefront
+9.  Verify: curl /health  →  open storefront
 
-9.  Configure features in admin (see docs/03-configuration.md)
+10. Configure features in admin (see docs/03-configuration.md)
 ```
 
 ---
@@ -327,5 +406,7 @@ open https://shop.acmeshop.com                # should load the store
 | `Publishable key is invalid` | Key not set or key belongs to a different backend | Re-copy from Admin → Settings → API Keys; set on storefront; redeploy storefront |
 | Admin UI at /app redirects to login loop | `ADMIN_CORS` missing backend's own URL | Add backend URL to `ADMIN_CORS` |
 | Payments don't appear in checkout | Payment env vars not set, or storefront missing `NEXT_PUBLIC_STRIPE_KEY` | Check backend payment env vars; check `NEXT_PUBLIC_STRIPE_KEY` for Stripe |
+| Product images lost after redeploy | MinIO not configured — files were on local disk | Set all six `S3_*` vars (Section 4d) and redeploy |
+| Image upload succeeds but URL 403/404 | MinIO bucket not set to public | Open MinIO Console → bucket → Anonymous Access → set to `public` |
 | `Cannot find module` build error | Node < 20 | Ensure Coolify's Nixpacks uses Node 20+ (set `NIXPACKS_NODE_VERSION=20` in build env if needed) |
 | Storefront build fails — `backend unreachable` | Storefront deployed before backend is ready | Deploy backend first, run migrations, then deploy storefront |

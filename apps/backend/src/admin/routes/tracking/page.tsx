@@ -1,4 +1,4 @@
-﻿import { defineRouteConfig } from "@medusajs/admin-sdk"
+import { defineRouteConfig } from "@medusajs/admin-sdk"
 import { useState } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { Container, Text, Badge, Button, Input, Switch, toast } from "@medusajs/ui"
@@ -75,11 +75,11 @@ function SetupGuide() {
               <ol className="flex flex-col gap-y-1.5 pl-4 list-decimal">
                 {[
                   "In Events Manager, select your Pixel -> Settings -> Conversions API",
-                  ‘Click "Generate access token" -- copy the token’,
+                  'Click "Generate access token" -- copy the token',
                   "Paste the token into the CAPI Access Token field above (it is encrypted before storage -- never stored in plaintext)",
                   "Enable CAPI and the Purchase event toggle, then Save",
                   "(Optional) In Events Manager -> Test Events, copy the Test Event Code and paste it above",
-                  ‘Click "Send test event" -- verify the event appears in Test Events with deduplication confirmed’,
+                  'Click "Send test event" -- verify the event appears in Test Events with deduplication confirmed',
                   "The server Purchase event uses order.id as event_id -- the browser Pixel also uses order.id -- Meta deduplicates them automatically",
                 ].map((s, i) => <li key={i}><Text size="small" className="text-ui-fg-subtle">{s}</Text></li>)}
               </ol>
@@ -188,7 +188,7 @@ export default function TrackingPage() {
       <div className="flex flex-col gap-y-1">
         <Text size="xlarge" weight="plus">Tracking & Analytics</Text>
         <Text size="small" className="text-ui-fg-subtle">
-          Configure Meta Pixel, GA4, and server-side Conversions API. IDs are loaded at runtime â€" no rebuild needed when changed.
+          Configure Meta Pixel, GA4, and server-side Conversions API. IDs are loaded at runtime -- no rebuild needed when changed.
         </Text>
       </div>
 
@@ -201,7 +201,7 @@ export default function TrackingPage() {
       )}
 
       {isLoading ? (
-        <Text size="small" className="text-ui-fg-subtle">Loading settingsâ€¦</Text>
+        <Text size="small" className="text-ui-fg-subtle">Loading settings...</Text>
       ) : (
         <>
           {/* Meta Pixel */}
@@ -218,7 +218,7 @@ export default function TrackingPage() {
                 onChange={(e) => setPixelId(e.target.value)}
               />
               <Text size="small" className="text-ui-fg-subtle">
-                15-16 digit number from Meta Events Manager. Not a secret â€" stored plainly.
+                15-16 digit number from Meta Events Manager. Not a secret -- stored plainly.
               </Text>
             </div>
           </Container>
@@ -237,7 +237,7 @@ export default function TrackingPage() {
                 onChange={(e) => setGa4Id(e.target.value)}
               />
               <Text size="small" className="text-ui-fg-subtle">
-                Format: G-XXXXXXXXXX. Found in Google Analytics â†’ Data Streams â†’ Web.
+                Format: G-XXXXXXXXXX. Found in Google Analytics → Data Streams → Web.
               </Text>
             </div>
           </Container>
@@ -284,7 +284,7 @@ export default function TrackingPage() {
                   autoComplete="off"
                 />
                 <Text size="small" className="text-ui-fg-subtle">
-                  Leave blank to keep the existing saved token. Token is encrypted before storage â€" never stored in plaintext.
+                  Leave blank to keep the existing saved token. Token is encrypted before storage -- never stored in plaintext.
                 </Text>
               </div>
 
@@ -296,7 +296,7 @@ export default function TrackingPage() {
                   onChange={(e) => setTestEventCode(e.target.value)}
                 />
                 <Text size="small" className="text-ui-fg-subtle">
-                  From Meta Events Manager â†’ Test Events tab. Used to verify events without polluting real data.
+                  From Meta Events Manager → Test Events tab. Used to verify events without polluting real data.
                 </Text>
               </div>
 
@@ -320,7 +320,7 @@ export default function TrackingPage() {
                       : "bg-ui-tag-red-bg text-ui-tag-red-text"
                   }`}
                 >
-                  <span>{testResult.success ? "âœ"" : "âœ—"}</span>
+                  <span>{testResult.success ? "✓" : "✗"}</span>
                   <span>{testResult.message}</span>
                 </div>
               )}

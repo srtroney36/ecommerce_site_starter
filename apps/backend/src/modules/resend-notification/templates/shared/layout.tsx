@@ -42,7 +42,8 @@ export function EmailLayout({ preview, children }: LayoutProps) {
           </Section>
 
           {/* Content */}
-          <Section style={content}>{children}</Section>
+          {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+          <Section style={content}>{children as any}</Section>
 
           {/* Footer */}
           <Hr style={divider} />
