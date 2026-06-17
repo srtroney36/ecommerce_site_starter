@@ -6,9 +6,15 @@
 
 Before deploying, run the stack locally to verify branding and configuration.
 
-### MinIO (local file storage)
+### Local file storage (dev only)
 
-A `docker-compose.yml` at the repo root starts MinIO for local development:
+In local development you can skip object storage entirely — the backend writes uploads
+to `apps/backend/static/` and serves them at `/static/...` automatically when no
+`S3_*` vars are set. Files persist between dev server restarts (but not between
+container rebuilds, so use real object storage in production).
+
+If you prefer to test with a real S3-compatible service locally, a `docker-compose.yml`
+at the repo root starts MinIO:
 
 ```bash
 docker compose up -d
@@ -20,7 +26,8 @@ docker compose up -d
 | MinIO Console | http://localhost:9101 | Web UI — login: `minioadmin` / `minioadmin` |
 
 The `medusa-store` bucket is created automatically with public-read access.
-The backend `.env.example` already includes the matching `S3_*` vars for local MinIO.
+The backend `.env.example` includes matching `S3_*` vars for local MinIO — copy and
+adjust for your chosen provider when deploying.
 
 ### Required env vars for local development
 
@@ -141,11 +148,11 @@ For each store, create **3 resources** in Coolify in this order:
 2. **Build command:** `npm run build` (runs `medusa build`)
 3. **Start command:** `npm run start` (runs `medusa start`)
 4. **Port:** `9000`
-5. **Domain:** assign e.g. `api.acmeshop.com` — enable SSL
+5. **Domain:** assign e.g. `app.acmeshop.com` — enable SSL
 6. Set **all required environment variables** (Section 5 below) before first deploy
 7. Deploy
 
-The admin UI is served automatically at `https://api.acmeshop.com/app`.
+The admin UI is served automatically at `https://app.acmeshop.com/app`.
 
 ### 4c. Next.js storefront app
 
@@ -157,34 +164,67 @@ The admin UI is served automatically at `https://api.acmeshop.com/app`.
 6. Set storefront env vars (Section 5 below)
 7. Deploy **after** the backend is running (the build fetches regions/config from the backend)
 
-### 4d. MinIO (file storage — strongly recommended for production)
+### 4d. S3-compatible file storage — strongly recommended for production
 
-Without MinIO, uploaded product images and other files are written to the container's
-local disk. They are **lost on every redeploy**. MinIO provides persistent S3-compatible
-object storage that survives redeployments.
+Without object storage, uploaded product images and other files are written to the
+container's local disk. They are **lost on every redeploy**. Use any S3-compatible
+provider to make uploads persistent.
 
-1. Coolify → **New Resource → Database → MinIO**
-2. Name it (e.g. `acmeshop-minio`) and deploy it
-3. From the Coolify resource page, copy:
-   - **Endpoint** (e.g. `https://minio-xxxx.coolify.io`)
-   - **Access Key**
-   - **Secret Key**
-4. Open the MinIO Console (Coolify exposes a console URL on the resource page)
-   - Log in with the Access Key / Secret Key
-   - Create a bucket (e.g. `medusa-store`)
-   - Bucket → **Anonymous Access → set to `public`** (so storefront can load images without signed URLs)
-5. Set these env vars on the **backend** app in Coolify (Section 5b):
+The backend supports any S3-compatible provider via the same six env vars. Two
+recommended options for Coolify deployments:
+
+---
+
+#### Option A — Cloudflare R2 (easiest, generous free tier)
+
+1. Cloudflare dashboard → **R2** → **Create bucket** (e.g. `medusa-store`)
+2. Bucket → **Settings → Public Access → Allow Access** — copy the public URL
+   (format: `https://pub-<hash>.r2.dev` or add your own custom domain)
+3. **Manage R2 API Tokens** → Create token with **Object Read & Write** on this bucket
+   — copy the **Access Key ID** and **Secret Access Key**
+4. Your **Account ID** is shown on the R2 overview page
+5. Set these env vars on the **backend** app in Coolify:
 
    | Variable | Value |
    |----------|-------|
-   | `S3_ENDPOINT` | Coolify MinIO endpoint, e.g. `https://minio-xxxx.coolify.io` |
+   | `S3_ENDPOINT` | `https://<account_id>.r2.cloudflarestorage.com` |
    | `S3_BUCKET` | Your bucket name, e.g. `medusa-store` |
-   | `S3_ACCESS_KEY_ID` | MinIO Access Key from Coolify |
-   | `S3_SECRET_ACCESS_KEY` | MinIO Secret Key from Coolify |
-   | `S3_REGION` | `us-east-1` (any string — MinIO ignores it) |
-   | `S3_FILE_URL` | `{S3_ENDPOINT}/{S3_BUCKET}`, e.g. `https://minio-xxxx.coolify.io/medusa-store` |
+   | `S3_ACCESS_KEY_ID` | R2 token Access Key ID |
+   | `S3_SECRET_ACCESS_KEY` | R2 token Secret Access Key |
+   | `S3_REGION` | `auto` |
+   | `S3_FILE_URL` | Public bucket URL, e.g. `https://pub-<hash>.r2.dev` or `https://cdn.acmeshop.com` |
 
 6. Redeploy the backend
+
+> **Note:** R2 public access is bucket-level (enabled in the Cloudflare dashboard), not
+> per-object ACL. `S3_FILE_URL` must point to the public domain, not the API endpoint.
+
+---
+
+#### Option B — Garage (self-hosted, runs on your Coolify VPS)
+
+[Garage](https://garagehq.deuxfleurs.fr/) is a lightweight self-hosted S3-compatible
+server. Run it as a Coolify Docker resource or a separate container.
+
+1. Deploy Garage (Docker image: `dxflrs/garage`) — configure at minimum one node and
+   one zone in `garage.toml`
+2. Via `garage` CLI or the web UI, create a bucket (e.g. `medusa-store`) and make it
+   public: `garage bucket allow --read medusa-store`
+3. Create an API key: `garage key create medusa-backend` — copy Access Key and Secret Key
+4. Set these env vars on the **backend** app in Coolify:
+
+   | Variable | Value |
+   |----------|-------|
+   | `S3_ENDPOINT` | Your Garage S3 API URL, e.g. `https://garage.acmeshop.com` |
+   | `S3_BUCKET` | Your bucket name, e.g. `medusa-store` |
+   | `S3_ACCESS_KEY_ID` | Garage Access Key |
+   | `S3_SECRET_ACCESS_KEY` | Garage Secret Key |
+   | `S3_REGION` | `garage` (any string — Garage ignores it) |
+   | `S3_FILE_URL` | `{S3_ENDPOINT}/{S3_BUCKET}`, e.g. `https://garage.acmeshop.com/medusa-store` |
+
+5. Redeploy the backend
+
+---
 
 > **All six vars must be set together.** If any is missing, the backend falls back to
 > local disk storage automatically (no errors, but files are lost on redeploy).
@@ -258,12 +298,12 @@ Add them only when you are ready to enable that feature.
 | `BKASH_SANDBOX` | bKash sandbox mode | Default `true`; set to `false` for live |
 | `BACKEND_URL` | Builds payment callback URLs for SSLCommerz/bKash | e.g. `https://api.acmeshop.com` — required when using those providers |
 | `STORE_URL` | Used in email templates (logo URL, account links) | e.g. `https://shop.acmeshop.com` — only needed when email is configured |
-| `S3_FILE_URL` | MinIO / S3 file storage — public URL prefix for uploads | e.g. `https://minio.acmeshop.com/your-bucket` — all four `S3_*` vars must be set together to activate; local disk used otherwise |
-| `S3_BUCKET` | S3 / MinIO bucket name | |
-| `S3_ACCESS_KEY_ID` | S3 / MinIO access key | |
-| `S3_SECRET_ACCESS_KEY` | S3 / MinIO secret key | |
-| `S3_ENDPOINT` | MinIO server URL (omit for AWS S3) | e.g. `https://minio.acmeshop.com` — required for MinIO, omit for AWS S3 |
-| `S3_REGION` | AWS region or any string for MinIO | Defaults to `us-east-1` when absent |
+| `S3_FILE_URL` | Public URL prefix for uploaded files | e.g. R2: `https://pub-<hash>.r2.dev`, Garage: `https://garage.acmeshop.com/medusa-store` — all six `S3_*` vars must be set together to activate; local disk used otherwise |
+| `S3_BUCKET` | Bucket name | e.g. `medusa-store` |
+| `S3_ACCESS_KEY_ID` | Access key / token key | From R2 API token or Garage key |
+| `S3_SECRET_ACCESS_KEY` | Secret key | From R2 API token or Garage key |
+| `S3_ENDPOINT` | S3-compatible API endpoint | R2: `https://<account_id>.r2.cloudflarestorage.com`, Garage: `https://garage.acmeshop.com` — omit for AWS S3 |
+| `S3_REGION` | Region string | R2: `auto`, Garage: any string, AWS: real region. Defaults to `us-east-1` when absent |
 | `REDIS_URL` | Redis for event bus / job queue | e.g. `redis://localhost:6379` — in-memory fallback used when absent |
 | `MEDUSA_ADMIN_ONBOARDING_TYPE` | Suppresses admin onboarding wizard | Set to `nextjs` (already in `.env.example`) |
 
@@ -363,9 +403,9 @@ open https://shop.acmeshop.com                # should load the store
 
 2.  Coolify: create PostgreSQL resource  → note the DATABASE_URL
 
-3.  Coolify: create MinIO resource  (see Section 4d)
-    → Create bucket (e.g. medusa-store)  → set anonymous access to public
-    → Note endpoint, access key, secret key
+3.  Set up S3-compatible file storage  (see Section 4d)
+    → Cloudflare R2 (recommended) or self-hosted Garage
+    → Create bucket, enable public access, note endpoint + access key + secret key
 
 4.  Coolify: create Backend app
     → Build: npm run build   Start: npm run start   Port: 9000
@@ -406,7 +446,7 @@ open https://shop.acmeshop.com                # should load the store
 | `Publishable key is invalid` | Key not set or key belongs to a different backend | Re-copy from Admin → Settings → API Keys; set on storefront; redeploy storefront |
 | Admin UI at /app redirects to login loop | `ADMIN_CORS` missing backend's own URL | Add backend URL to `ADMIN_CORS` |
 | Payments don't appear in checkout | Payment env vars not set, or storefront missing `NEXT_PUBLIC_STRIPE_KEY` | Check backend payment env vars; check `NEXT_PUBLIC_STRIPE_KEY` for Stripe |
-| Product images lost after redeploy | MinIO not configured — files were on local disk | Set all six `S3_*` vars (Section 4d) and redeploy |
-| Image upload succeeds but URL 403/404 | MinIO bucket not set to public | Open MinIO Console → bucket → Anonymous Access → set to `public` |
+| Product images lost after redeploy | Object storage not configured — files were on local disk | Set all six `S3_*` vars (Section 4d) and redeploy |
+| Image upload succeeds but URL 403/404 | Bucket not public | R2: dashboard → bucket → Public Access → Allow. Garage: `garage bucket allow --read <bucket>` |
 | `Cannot find module` build error | Node < 20 | Ensure Coolify's Nixpacks uses Node 20+ (set `NIXPACKS_NODE_VERSION=20` in build env if needed) |
 | Storefront build fails — `backend unreachable` | Storefront deployed before backend is ready | Deploy backend first, run migrations, then deploy storefront |
