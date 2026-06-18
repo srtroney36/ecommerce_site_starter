@@ -87,11 +87,18 @@ horizontally or if you need event durability across deployments.
 | Git host | GitHub, GitLab, or Gitea — Coolify can pull from any of these |
 | Coolify VPS | 2 vCPU / 4 GB RAM minimum recommended; Ubuntu 22.04 LTS |
 | Domain + DNS | Two subdomains per store: e.g. `api.acmeshop.com` (backend) and `shop.acmeshop.com` (storefront) |
-| Node.js ≥ 20 | Only needed if building locally. Backend `package.json` requires `"node": ">=20"`. Coolify uses the Nixpacks builder which picks this up automatically. |
+| Node.js ≥ 20 | **Required locally.** Backend `package.json` requires `"node": ">=20"`. You run database migrations from your local machine (see Section 7a) and may build locally. |
+| `ssh` client | Required to tunnel to the managed Postgres for migrations (Section 7a). Built into Windows/macOS/Linux. |
 
-You do **not** need a local Node/Postgres setup to deploy — Coolify builds and runs
-everything on the server. A local environment is only needed for the branding step
-(Part 1) and any code customization.
+> **Builds use the committed Dockerfiles, not Nixpacks.** This template ships
+> `apps/backend/Dockerfile` and `apps/storefront/Dockerfile`. In Coolify you must set each
+> app's **Build Pack = Dockerfile** (Nixpacks is unreliable for this stack — it intermittently
+> fails the nix setup and corrupts the Next.js build cache). See Section 4b/4c.
+
+> **You need a local Node setup.** Database migrations are run **from your local machine**
+> against the server's database, because `medusa db:migrate` hangs when run inside the
+> deployed container (see Section 7a for the why and the exact procedure). A local
+> environment is also needed for branding (Part 1) and code customization.
 
 ---
 
@@ -145,24 +152,43 @@ For each store, create **3 resources** in Coolify in this order:
 ### 4b. Medusa backend app
 
 1. Coolify → **New Resource → Application** → connect your Git repo, select branch `main`
-2. **Build command:** `npm run build` (runs `medusa build`)
-3. **Start command:** `npm run start` (runs `medusa start`)
-4. **Port:** `9000`
-5. **Domain:** assign e.g. `app.acmeshop.com` — enable SSL
-6. Set **all required environment variables** (Section 5 below) before first deploy
-7. Deploy
+2. **Build Pack:** **Dockerfile** (not Nixpacks). **Dockerfile Location:** `Dockerfile`.
+   **Base Directory:** `apps/backend`.
+3. Leave Build/Install/Start commands **empty** — the Dockerfile defines them. (The container
+   runs `medusa start` only; migrations are run separately, Section 7a.)
+4. **Port / Ports Exposes:** `9000` (required — Traefik returns `502 Bad Gateway` without it)
+5. **Domain:** assign e.g. `https://app.acmeshop.com` (include `https://`) — enable SSL
+6. **Build timeout:** raise to `3600` (the first `npm install` of Medusa is large)
+7. Set **all required environment variables** (Section 5) before first deploy. Make sure each
+   var is a **runtime** variable — in Coolify, leave **"Is Build Time" unchecked** (if checked,
+   `DATABASE_URL` etc. won't exist at runtime and the app can't reach the DB).
+8. Deploy. **Deploy the backend and storefront one at a time** — two simultaneous Docker
+   builds can OOM the VPS.
 
 The admin UI is served automatically at `https://app.acmeshop.com/app`.
+
+> **The backend Dockerfile** (`apps/backend/Dockerfile`) is deliberately structured:
+> base image `node:20` (Debian — **not** alpine; musl breaks some Medusa native deps), build
+> in `/app`, then a second `npm install` inside `/app/.medusa/server` (the build output is a
+> self-contained app with its own `package.json`), `ENV NODE_ENV=production`, and
+> `CMD ["npm", "run", "start"]`. It intentionally does **not** run `db:migrate` (Section 7a).
 
 ### 4c. Next.js storefront app
 
 1. Coolify → **New Resource → Application** → same or separate Git repo
-2. **Build command:** `npm run build` (runs `next build`)
-3. **Start command:** `npm run start` (runs `next start -p 8000`)
-4. **Port:** `8000`
-5. **Domain:** assign e.g. `shop.acmeshop.com` — enable SSL
-6. Set storefront env vars (Section 5 below)
-7. Deploy **after** the backend is running (the build fetches regions/config from the backend)
+2. **Build Pack:** **Dockerfile**. **Dockerfile Location:** `Dockerfile`. **Base Directory:**
+   `apps/storefront`. Leave Build/Install/Start commands empty.
+3. **Port / Ports Exposes:** `8000`
+4. **Domain:** assign e.g. `https://shop.acmeshop.com` — enable SSL
+5. **Build timeout:** `3600`
+6. Set storefront env vars (Section 5). **`NEXT_PUBLIC_*` vars must exist at build time** —
+   Next.js bakes them into the static bundle. The storefront Dockerfile declares them as
+   `ARG`s so Coolify passes them as `--build-arg` automatically; just set them in Coolify as
+   normal env vars before building. Changing a `NEXT_PUBLIC_*` value requires a **rebuild**,
+   not just a restart.
+7. Deploy **after** the backend is running, and **not at the same time as the backend build**
+   (the storefront build fetches regions/config from the backend, and concurrent builds can
+   OOM the VPS).
 
 ### 4d. S3-compatible file storage — strongly recommended for production
 
@@ -346,20 +372,48 @@ Add them only when you are ready to enable that feature.
 
 After the backend app is deployed and healthy:
 
-### 7a. Run database migrations
+### 7a. Run database migrations — from your LOCAL machine, not the container
 
-In Coolify → backend app → **Terminal** (or via SSH to the container):
+> **Do not run `medusa db:migrate` inside the deployed container — it hangs.** In this
+> environment `db:migrate` stalls indefinitely after printing `Running migrations...` (it
+> creates the `mikro_orm_migrations` tracking table, then hangs on an unresolved async op;
+> ruled out: OS, memory, network, lock contention). The connection itself is healthy and the
+> identical command runs fine from a local machine. So migrations are run **from local against
+> the server DB over an SSH tunnel.** This is why the backend Dockerfile is start-only.
 
+**One-time prep:** find the Postgres container's IP on the Docker network (SSH into the VPS):
 ```bash
-# Create/update all database tables
-npx medusa db:migrate
-
-# Sync module links (cross-module foreign key relationships)
-npx medusa db:sync-links
+# get the postgres container id
+docker ps | grep -i postgres
+# its IP on the coolify network (e.g. 172.16.1.7)
+docker inspect <pg-container-id> -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'
 ```
 
-Both commands are safe to re-run. Always run them after the first deploy and after
-any update that adds new modules or model fields.
+**Terminal A (local) — open the tunnel and leave it running:**
+```bash
+ssh -L 15432:<pg-ip>:5432 <user>@<vps-ip>
+```
+This forwards local port `15432` to the managed Postgres.
+
+**Terminal B (local) — run migrations from the repo source** (the path that works; same as
+`npm run dev`):
+```bash
+cd apps/backend
+# point at the tunnel; use the SAME db password as DATABASE_URL on the server
+#   PowerShell:  $env:DATABASE_URL = "postgres://USER:PASS@127.0.0.1:15432/DBNAME"
+#   bash:        export DATABASE_URL="postgres://USER:PASS@127.0.0.1:15432/DBNAME"
+npx medusa db:migrate
+```
+
+This runs schema migrations, syncs module links, and runs migration scripts. It is
+idempotent — safe to re-run. If a migration trips on `ECONNRESET` over the tunnel, just run it
+again; completed migrations are skipped. Re-run it after any update that adds modules or model
+fields. (`db:sync-links` is included automatically by `db:migrate`.)
+
+> **Note on the seed:** the bundled `initial-data-seed.ts` migration script may fail with
+> `Providers (manual_manual) are not enabled for the service location`. That is seed *data*,
+> not schema — the backend still boots. Create the region / sales channel / stock location in
+> the admin (Section 7d) if the seed didn't populate them.
 
 ### 7b. Create the first admin user
 
@@ -379,8 +433,15 @@ Then log in at `https://api.acmeshop.com/app`.
 
 ### 7d. Create a region
 
-Admin → Settings → Regions → **Add Region**
-- Select currency and countries
+**First enable the currency on the store:** a currency only appears in the region form after
+it's added to the store. Admin → **Settings → Store → Currencies** → add your currency
+(e.g. **BDT** for Bangladesh) and set the default. Countries (e.g. Bangladesh) are built-in and
+selectable directly.
+
+Then Admin → Settings → Regions → **Add Region**
+- Select the currency (now listed) and countries
+- Add a payment provider (the system/manual provider is available by default; Stripe/SSLCommerz
+  appear only once their env keys are set)
 - The region code (e.g. `us`, `bd`) should match `NEXT_PUBLIC_DEFAULT_REGION`
 
 ### 7e. Verify
@@ -408,28 +469,32 @@ open https://shop.acmeshop.com                # should load the store
     → Create bucket, enable public access, note endpoint + access key + secret key
 
 4.  Coolify: create Backend app
-    → Build: npm run build   Start: npm run start   Port: 9000
+    → Build Pack: Dockerfile   Base Dir: apps/backend   Port: 9000   Build timeout: 3600
     → Set REQUIRED env vars (table 5a) incl. a FRESH APP_SECRETS_ENCRYPTION_KEY
+    → Env vars must be RUNTIME (uncheck "Is Build Time")
     → Set CORS vars to the new store's domains
-    → Set all six S3_* vars (table 5b) pointing at the MinIO resource
-    → Deploy
+    → Set all six S3_* vars (table 5b)
+    → Deploy (one app at a time — don't build backend + storefront together)
 
-5.  In Coolify terminal / SSH:
-    npx medusa db:migrate
-    npx medusa db:sync-links
-    npx medusa user -e admin@... -p ...
+5.  Migrations FROM LOCAL (never in the container — it hangs):
+    Terminal A:  ssh -L 15432:<pg-ip>:5432 <user>@<vps>
+    Terminal B:  cd apps/backend
+                 DATABASE_URL=postgres://USER:PASS@127.0.0.1:15432/DBNAME npx medusa db:migrate
+    Then create admin (against the running container is fine):
+                 docker exec -it <backend-id> sh -c "cd /app/.medusa/server && npx medusa user -e admin@... -p ..."
 
 6.  Admin → Settings → API Keys → create publishable key  → copy pk_...
 
 7.  Coolify: create Storefront app
-    → Build: npm run build   Start: npm run start   Port: 8000
+    → Build Pack: Dockerfile   Base Dir: apps/storefront   Port: 8000   Build timeout: 3600
     → Set NEXT_PUBLIC_MEDUSA_BACKEND_URL, NEXT_PUBLIC_MEDUSA_PUBLISHABLE_KEY,
-      NEXT_PUBLIC_DEFAULT_REGION, NEXT_PUBLIC_BASE_URL
-    → Deploy
+      NEXT_PUBLIC_DEFAULT_REGION, NEXT_PUBLIC_BASE_URL  (baked in at build time)
+    → Deploy (after backend is up; not concurrently with the backend build)
 
-8.  Admin → Settings → Regions → add region matching NEXT_PUBLIC_DEFAULT_REGION
+8.  Admin → Settings → Store → add currency (e.g. BDT); then Regions → add region
+    matching NEXT_PUBLIC_DEFAULT_REGION
 
-9.  Verify: curl /health  →  open storefront
+9.  Verify: curl /health  →  open storefront/app  (hard-refresh /app if cached from earlier)
 
 10. Configure features in admin (see docs/03-configuration.md)
 ```
@@ -440,7 +505,16 @@ open https://shop.acmeshop.com                # should load the store
 
 | Symptom | Likely cause | Fix |
 |---------|-------------|-----|
-| Backend crashes on start | `DATABASE_URL` wrong or DB not yet ready | Check connection string; ensure PG resource is deployed before backend |
+| Backend crashes on start with `relation "X" does not exist` | Migrations never ran | Run migrations from local (Section 7a) — they hang inside the container |
+| `medusa db:migrate` hangs at `Running migrations...` (in the container) | Known issue in this deployed env | Run migrations from your **local** machine over an SSH tunnel (Section 7a). Don't put `db:migrate` in the container CMD. |
+| Backend deploy succeeds then exits "10x restarts" | App crashed on start (usually missing tables) | Check **runtime** logs (not build logs); run migrations (Section 7a) |
+| Build fails: `npm error ERESOLVE ... peer @medusajs/framework` | A `^`-ranged `@medusajs/*` dep resolved to a newer minor than `framework` | Pin `@medusajs/file-s3` and `@medusajs/payment-stripe` to the exact framework version (e.g. `2.15.5`) in `apps/backend/package.json` |
+| Build fails at `npm install` with exit 255 (no error text) | Build host OOM — backend + storefront building at once | Deploy one app at a time; raise build timeout to 3600 |
+| Backend crashes on start | `DATABASE_URL` wrong or DB not yet ready | Check connection string; ensure PG resource is deployed before backend. Inside containers `DATABASE_URL` must use the DB's **internal** Docker hostname, not `localhost` |
+| Domain shows `502 Bad Gateway` | Port not set in Coolify | Set **Ports Exposes** = `9000` (backend) / `8000` (storefront); domain must include `https://` |
+| `/app` shows `Cannot GET /app` in browser but `curl localhost:9000/app` returns 200 | Stale browser cache from earlier failed deploys | Hard-refresh (Ctrl+Shift+R) or open incognito; clear site cache |
+| Env var (e.g. `DATABASE_URL`) missing inside the running container | Var set as **build-time only** in Coolify | Uncheck "Is Build Time" so it's a runtime var; redeploy |
+| Currency (e.g. BDT) not selectable when creating a region | Currency not enabled on the store | Admin → Settings → Store → Currencies → add it first |
 | `Error: Encryption key must be 64 hex characters` | `APP_SECRETS_ENCRYPTION_KEY` missing or wrong length | Generate with `openssl rand -hex 32`; confirm it is exactly 64 chars |
 | Storefront shows `Failed to fetch` or blank page | `NEXT_PUBLIC_MEDUSA_BACKEND_URL` points to wrong host, or CORS blocked | Verify `STORE_CORS` on backend matches storefront URL exactly; check `NEXT_PUBLIC_MEDUSA_BACKEND_URL` on storefront |
 | `Publishable key is invalid` | Key not set or key belongs to a different backend | Re-copy from Admin → Settings → API Keys; set on storefront; redeploy storefront |
@@ -448,5 +522,5 @@ open https://shop.acmeshop.com                # should load the store
 | Payments don't appear in checkout | Payment env vars not set, or storefront missing `NEXT_PUBLIC_STRIPE_KEY` | Check backend payment env vars; check `NEXT_PUBLIC_STRIPE_KEY` for Stripe |
 | Product images lost after redeploy | Object storage not configured — files were on local disk | Set all six `S3_*` vars (Section 4d) and redeploy |
 | Image upload succeeds but URL 403/404 | Bucket not public | R2: dashboard → bucket → Public Access → Allow. Garage: `garage bucket allow --read <bucket>` |
-| `Cannot find module` build error | Node < 20 | Ensure Coolify's Nixpacks uses Node 20+ (set `NIXPACKS_NODE_VERSION=20` in build env if needed) |
+| `Cannot find module` build error | Node < 20 | The Dockerfiles pin `node:20`; if you customized them, keep Node ≥ 20 (`package.json` requires it) |
 | Storefront build fails — `backend unreachable` | Storefront deployed before backend is ready | Deploy backend first, run migrations, then deploy storefront |
