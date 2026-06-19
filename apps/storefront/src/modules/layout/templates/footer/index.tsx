@@ -2,6 +2,7 @@ import { listCategories } from "@lib/data/categories"
 import brand from "brand.config"
 import { Text } from "@modules/common/components/ui"
 import LocalizedClientLink from "@modules/common/components/localized-client-link"
+import BrandLogo from "@modules/common/components/brand-logo"
 import { MapPin, Phone, Mail } from "lucide-react"
 import { Facebook } from "@medusajs/icons"
 
@@ -106,11 +107,11 @@ export default async function Footer() {
 
           {/* ── Brand column ── */}
           <div className="flex flex-col gap-6">
-            <LocalizedClientLink
-              href="/"
-              className="txt-compact-xlarge-plus uppercase hover:text-ui-fg-base self-start"
-            >
-              {brand.storeName}
+            <LocalizedClientLink href="/" className="self-start">
+              <BrandLogo
+                imgClassName="h-12 w-auto"
+                textClassName="txt-compact-xlarge-plus uppercase hover:text-ui-fg-base"
+              />
             </LocalizedClientLink>
 
             <p className="text-sm text-ui-fg-subtle leading-relaxed max-w-xs">

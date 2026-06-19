@@ -11,7 +11,7 @@ import CartButton from "@modules/layout/components/cart-button"
 import CategoryBar from "@modules/layout/components/category-bar"
 import SideMenu from "@modules/layout/components/side-menu"
 import SearchBar from "@modules/layout/components/search-bar"
-import brand from "brand.config"
+import BrandLogo from "@modules/common/components/brand-logo"
 
 export default async function Nav() {
   const [regions, locales, currentLocale, allCategories] = await Promise.all([
@@ -42,10 +42,13 @@ export default async function Nav() {
             {/* Brand name: desktop — stays left-aligned */}
             <LocalizedClientLink
               href="/"
-              className="hidden lg:block txt-compact-xlarge-plus hover:text-ui-fg-base uppercase"
+              className="hidden lg:block"
               data-testid="nav-store-link"
             >
-              {brand.storeName}
+              <BrandLogo
+                imgClassName="h-10 w-auto"
+                textClassName="txt-compact-xlarge-plus uppercase hover:text-ui-fg-base"
+              />
             </LocalizedClientLink>
           </div>
 
@@ -53,10 +56,13 @@ export default async function Nav() {
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none lg:hidden">
             <LocalizedClientLink
               href="/"
-              className="txt-compact-xlarge-plus hover:text-ui-fg-base uppercase pointer-events-auto"
+              className="pointer-events-auto"
               data-testid="nav-store-link-mobile"
             >
-              {brand.storeName}
+              <BrandLogo
+                imgClassName="h-10 w-auto"
+                textClassName="txt-compact-xlarge-plus uppercase hover:text-ui-fg-base"
+              />
             </LocalizedClientLink>
           </div>
 

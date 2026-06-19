@@ -103,13 +103,27 @@ apps/storefront/public/
 
 **Logo**
 - Recommended: SVG (scales cleanly at any size) or PNG with transparent background
-- Rendered in the nav bar at `h-8` (32 px tall); width scales automatically
+- Rendered in the **nav** at `h-10` (40 px tall) and the **footer** at `h-12`; width scales automatically
 - Recommended canvas: 200 × 50 px or wider proportionally
+- **Logo-or-text fallback (automatic):** if a logo file exists at `public/<logoPath>`, the nav
+  and footer show the **image**; if no logo file is present, they show the **store-name text**
+  instead. So a freshly cloned store (no logo yet) shows text, and dropping in `logo.svg`
+  switches it to the image — no code change needed. (Set `logoPath: ""` to force text-only.)
 
 **Favicon**
 - Format: `.ico` (multi-resolution) or `.png`
 - Recommended: 32 × 32 px minimum; include 192 × 192 for PWA icons if needed
-- The `faviconPath` value in brand.config is used directly as `<link rel="icon" href="...">` — no build step required
+- The `faviconPath` value in brand.config is wired into the storefront `<head>` automatically
+  (via Next.js `metadata.icons`) — no manual `<link>` needed.
+
+> **Admin browser tab (title + favicon).** The Medusa admin (`/app`) is a separate app, so its
+> tab title/favicon are set on the **backend**, not from `brand.config`:
+> - **Title:** set the backend env var `ADMIN_APP_NAME` to your store name (build-time), or edit
+>   `ADMIN_TITLE_FALLBACK` in `apps/backend/scripts/brand-admin.mjs`. Default is `Medusa Admin`.
+> - **Favicon:** copy your favicon to `apps/backend/scripts/admin-favicon.ico` (use the **same**
+>   file as `apps/storefront/public/favicon.ico` so the admin and storefront match).
+> A post-build script (`brand-admin.mjs`, run automatically by `npm run build`) applies both to
+> the generated admin on every backend deploy.
 
 ---
 
@@ -149,8 +163,10 @@ Check:
 [ ] Edit storeName, tagline, description in brand.config.ts
 [ ] Edit colors.primary (and secondary/bg/text if needed)
 [ ] Edit fonts.heading / fonts.body
-[ ] Replace public/images/logo.svg with your logo
-[ ] Replace public/favicon.ico with your favicon
+[ ] Add public/images/logo.svg (logo shows automatically; without it, store-name text shows)
+[ ] Add public/favicon.ico (storefront favicon — wired automatically)
+[ ] Copy the SAME favicon to apps/backend/scripts/admin-favicon.ico (admin tab icon)
+[ ] Set backend env ADMIN_APP_NAME = store name (or edit brand-admin.mjs fallback) for the admin title
 [ ] Edit contact.address / phone / email / whatsapp
 [ ] Set social links (facebook, twitter, instagram) — leave "" to hide
 [ ] (Optional) Edit footer INFO_LINKS / SUPPORT_LINKS / POLICY_LINKS
