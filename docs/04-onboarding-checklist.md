@@ -47,7 +47,6 @@ from your deploy work to what the client sets up themselves in the admin.
 ```
 [ ] Migrations ran automatically on deploy — check backend logs for
     "Running migrations" → migrations applied → "Server is ready"
-    (fallback if migrate stalls on your host: docs/02-deployment.md §7a tunnel method)
 [ ] Admin user created: docker exec -it <backend-id> sh -c "cd /app/.medusa/server && npx medusa user -e admin@... -p ..."
 [ ] Admin login verified at https://api.acmeshop.com/app  (hard-refresh if cached)
 ```

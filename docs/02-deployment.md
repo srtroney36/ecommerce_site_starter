@@ -107,8 +107,7 @@ horizontally or if you need event durability across deployments.
 
 > **Migrations run automatically on deploy.** The backend Dockerfile's start command runs
 > `medusa db:migrate` and then `medusa start`, so a normal deploy applies schema changes itself —
-> no local migration step. (Fallback: on the rare host where in-container migrate stalls, run it
-> from your local machine over an SSH tunnel — see Section 7a.)
+> no local migration step, on any host.
 
 ---
 
@@ -397,43 +396,11 @@ migrations applied → `Server is ready`. Migrations are idempotent — repeat d
 > multiple replicas, scale to 1 for the migrating deploy (or run migrations out-of-band) to avoid
 > a race.
 
----
-
-#### Fallback — migrate from your LOCAL machine over an SSH tunnel
-
-Only needed if in-container migrate **stalls** on your host (observed once on a specific Coolify
-VPS: `db:migrate` hung after creating the `mikro_orm_migrations` table — OS/memory/network/lock
-contention all ruled out; the identical command ran fine from local). If that happens, make the
-Dockerfile start command `medusa start` only and run migrations from local instead:
-
-**One-time prep:** find the Postgres container's IP on the Docker network (SSH into the VPS):
-```bash
-# get the postgres container id
-docker ps | grep -i postgres
-# its IP on the coolify network (e.g. 172.16.1.7)
-docker inspect <pg-container-id> -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'
-```
-
-**Terminal A (local) — open the tunnel and leave it running:**
-```bash
-ssh -L 15432:<pg-ip>:5432 <user>@<vps-ip>
-```
-This forwards local port `15432` to the managed Postgres.
-
-**Terminal B (local) — run migrations from the repo source** (the path that works; same as
-`npm run dev`):
-```bash
-cd apps/backend
-# point at the tunnel; use the SAME db password as DATABASE_URL on the server
-#   PowerShell:  $env:DATABASE_URL = "postgres://USER:PASS@127.0.0.1:15432/DBNAME"
-#   bash:        export DATABASE_URL="postgres://USER:PASS@127.0.0.1:15432/DBNAME"
-npx medusa db:migrate
-```
-
-This runs schema migrations, syncs module links, and runs migration scripts. It is
-idempotent — safe to re-run. If a migration trips on `ECONNRESET` over the tunnel, just run it
-again; completed migrations are skipped. Re-run it after any update that adds modules or model
-fields. (`db:sync-links` is included automatically by `db:migrate`.)
+> **No local migration step.** Earlier versions ran migrations from a local machine because
+> in-container `db:migrate` could hang. That is fixed in the template: `medusa-config.ts` sets
+> `databaseDriverOptions.connection.keepAlive`, which keeps the migration DB socket alive behind
+> Docker NAT (the framework already does this for the runtime connection, but not the migration
+> one). Verified on Coolify and Dokploy against fresh databases.
 
 > **Note on the seed:** on a fresh DB the bundled `initial-data-seed.ts` migration script seeds a
 > demo store (Europe/EUR region, a warehouse, and sample products). It is wrapped so a failure is
@@ -503,7 +470,6 @@ open https://shop.acmeshop.com                # should load the store
     → Set all six S3_* vars (table 5b)
     → Deploy (one app at a time — don't build backend + storefront together)
     → The container migrates on start; watch logs for "Running migrations" → "Server is ready"
-      (fallback if migrate stalls on your host: Section 7a tunnel method)
 
 5.  Create the admin user (against the running container):
                  docker exec -it <backend-id> sh -c "cd /app/.medusa/server && npx medusa user -e admin@... -p ..."
@@ -530,9 +496,9 @@ open https://shop.acmeshop.com                # should load the store
 
 | Symptom | Likely cause | Fix |
 |---------|-------------|-----|
-| Backend crashes on start with `relation "X" does not exist` | Migrations never ran | Run migrations from local (Section 7a) — they hang inside the container |
-| `medusa db:migrate` hangs at `Running migrations...` (in the container) | Known issue in this deployed env | Run migrations from your **local** machine over an SSH tunnel (Section 7a). Don't put `db:migrate` in the container CMD. |
-| Backend deploy succeeds then exits "10x restarts" | App crashed on start (usually missing tables) | Check **runtime** logs (not build logs); run migrations (Section 7a) |
+| Backend crashes on start with `relation "X" does not exist` | The on-start `db:migrate` didn't complete | Check the **runtime** logs for a migration error; confirm `DATABASE_URL` is reachable from the container (internal DB host, not localhost); redeploy |
+| `medusa db:migrate` hangs at `Running migrations...` (in the container) | Migration DB socket dropped behind Docker NAT | Already handled — `medusa-config.ts` sets `databaseDriverOptions.connection.keepAlive`. If a host still stalls, it's a Docker overlay MTU issue: set `{"mtu": 1400}` in `/etc/docker/daemon.json` and restart docker |
+| Backend deploy succeeds then exits "10x restarts" | App crashed on start (usually a failed migration) | Check **runtime** logs (not build logs); fix the DB connection / migration error and redeploy |
 | Build fails: `npm error ERESOLVE ... peer @medusajs/framework` | A `^`-ranged `@medusajs/*` dep resolved to a newer minor than `framework` | Pin `@medusajs/file-s3` and `@medusajs/payment-stripe` to the exact framework version (e.g. `2.15.5`) in `apps/backend/package.json` |
 | Build fails at `npm install` with exit 255 (no error text) | Build host OOM — backend + storefront building at once | Deploy one app at a time; raise build timeout to 3600 |
 | Backend crashes on start | `DATABASE_URL` wrong or DB not yet ready | Check connection string; ensure PG resource is deployed before backend. Inside containers `DATABASE_URL` must use the DB's **internal** Docker hostname, not `localhost` |

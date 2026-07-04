@@ -141,8 +141,7 @@ The `--clean` restore drops and recreates the tables from the new dump.
 
 ## Option B — Read-only live peek via SSH tunnel (quick, risky)
 
-For a fast look at live data **without** taking a dump, you can tunnel to the production DB
-(same tunnel used for migrations in [02-deployment.md](02-deployment.md#7a-run-database-migrations--from-your-local-machine-not-the-container)):
+For a fast look at live data **without** taking a dump, you can tunnel to the production DB:
 
 ```bash
 # terminal A
@@ -167,9 +166,9 @@ DATABASE_URL=postgres://USER:PASS@127.0.0.1:15432/DBNAME npm run start   # start
 | You want to… | Use |
 |--------------|-----|
 | Develop/preview changes safely against real data | **Option A** (local copy) |
-| Test a schema change or new migration before deploying | **Option A** (then deploy + run migrations per [02-deployment.md](02-deployment.md) §7a) |
+| Test a schema change or new migration before deploying | **Option A** (then deploy — the container runs migrations on start) |
 | Just glance at live data for a minute | Option B (read-only) |
 
-When local previews look good, deploy as usual — and remember schema changes still require
-running `medusa db:migrate` **from local against production over the tunnel**, never inside
-the container (see [02-deployment.md](02-deployment.md) §7a).
+When local previews look good, deploy as usual — schema changes are applied automatically by the
+container's on-start `db:migrate` (see [02-deployment.md](02-deployment.md) §7a). No manual
+migration step.
