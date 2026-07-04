@@ -96,20 +96,19 @@ horizontally or if you need event durability across deployments.
 | PostgreSQL 15+ | Managed by your platform, or a separate managed/self-hosted instance |
 | S3-compatible storage | Any provider (AWS S3, Cloudflare R2, Backblaze B2, MinIO, Garage…) — Section 4d |
 | Domain + DNS | Two subdomains per store: e.g. `api.acmeshop.com` (backend) and `shop.acmeshop.com` (storefront) |
-| Node.js ≥ 20 | **Required locally.** Backend `package.json` requires `"node": ">=20"`. You run database migrations from your local machine (see Section 7a) and may build locally. |
-| `ssh` client | Required to tunnel to the managed Postgres for migrations (Section 7a). Built into Windows/macOS/Linux. |
+| Node.js ≥ 20 | Recommended locally for branding (Part 1) and customization. Not needed just to deploy — the container builds and migrates itself. |
 
 > **Builds use the committed Dockerfiles.** This template ships
 > `apps/backend/Dockerfile` and `apps/storefront/Dockerfile` — these define the entire build.
 > Configure your platform to build **from the Dockerfile**, not an auto-detected buildpack.
-> (On Coolify specifically, set **Build Pack = Dockerfile** — its default Nixpacks builder is
-> unreliable for this stack: it intermittently fails the nix setup and corrupts the Next.js
-> build cache.) See Section 4b/4c.
+> (On Coolify/Dokploy, set **Build Pack = Dockerfile** — Nixpacks/auto-detect is unreliable for
+> this stack: it intermittently fails the nix setup and corrupts the Next.js build cache.) See
+> Section 4b/4c.
 
-> **You need a local Node setup.** Database migrations are run **from your local machine**
-> against the server's database, because `medusa db:migrate` hangs when run inside the
-> deployed container (see Section 7a for the why and the exact procedure). A local
-> environment is also needed for branding (Part 1) and code customization.
+> **Migrations run automatically on deploy.** The backend Dockerfile's start command runs
+> `medusa db:migrate` and then `medusa start`, so a normal deploy applies schema changes itself —
+> no local migration step. (Fallback: on the rare host where in-container migrate stalls, run it
+> from your local machine over an SSH tunnel — see Section 7a.)
 
 ---
 
@@ -169,7 +168,7 @@ a Postgres, deploy each Dockerfile, set its env vars and domain."
 2. **Build Pack:** **Dockerfile** (not Nixpacks). **Dockerfile Location:** `Dockerfile`.
    **Base Directory:** `apps/backend`.
 3. Leave Build/Install/Start commands **empty** — the Dockerfile defines them. (The container
-   runs `medusa start` only; migrations are run separately, Section 7a.)
+   runs `medusa db:migrate` then `medusa start` on startup — migrations apply automatically.)
 4. **Port / Ports Exposes:** `9000` (required — Traefik returns `502 Bad Gateway` without it)
 5. **Domain:** assign e.g. `https://app.acmeshop.com` (include `https://`) — enable SSL
 6. **Build timeout:** raise to `3600` (the first `npm install` of Medusa is large)
@@ -185,7 +184,9 @@ The admin UI is served automatically at `https://app.acmeshop.com/app`.
 > base image `node:20` (Debian — **not** alpine; musl breaks some Medusa native deps), build
 > in `/app`, then a second `npm install` inside `/app/.medusa/server` (the build output is a
 > self-contained app with its own `package.json`), `ENV NODE_ENV=production`, and
-> `CMD ["npm", "run", "start"]`. It intentionally does **not** run `db:migrate` (Section 7a).
+> `CMD ["sh", "-c", "npx medusa db:migrate && exec npx medusa start"]` — it migrates then starts
+> from inside `.medusa/server`. Schema migrations fail fast (bad schema → the container
+> crash-loops with the error in logs); the demo-data seed is best-effort and never blocks boot.
 
 ### 4c. Next.js storefront app
 
@@ -385,14 +386,25 @@ Add them only when you are ready to enable that feature.
 
 After the backend app is deployed and healthy:
 
-### 7a. Run database migrations — from your LOCAL machine, not the container
+### 7a. Database migrations — automatic on deploy
 
-> **Do not run `medusa db:migrate` inside the deployed container — it hangs.** In this
-> environment `db:migrate` stalls indefinitely after printing `Running migrations...` (it
-> creates the `mikro_orm_migrations` tracking table, then hangs on an unresolved async op;
-> ruled out: OS, memory, network, lock contention). The connection itself is healthy and the
-> identical command runs fine from a local machine. So migrations are run **from local against
-> the server DB over an SSH tunnel.** This is why the backend Dockerfile is start-only.
+**Nothing to do.** The backend container runs `medusa db:migrate` and then `medusa start` on
+startup, so every deploy applies schema migrations, syncs module links, and runs migration
+scripts before the server accepts traffic. Watch the deploy logs for `Running migrations…` →
+migrations applied → `Server is ready`. Migrations are idempotent — repeat deploys are safe.
+
+> **Single instance:** migrate-on-start assumes one backend instance boots at a time. If you run
+> multiple replicas, scale to 1 for the migrating deploy (or run migrations out-of-band) to avoid
+> a race.
+
+---
+
+#### Fallback — migrate from your LOCAL machine over an SSH tunnel
+
+Only needed if in-container migrate **stalls** on your host (observed once on a specific Coolify
+VPS: `db:migrate` hung after creating the `mikro_orm_migrations` table — OS/memory/network/lock
+contention all ruled out; the identical command ran fine from local). If that happens, make the
+Dockerfile start command `medusa start` only and run migrations from local instead:
 
 **One-time prep:** find the Postgres container's IP on the Docker network (SSH into the VPS):
 ```bash
@@ -423,15 +435,17 @@ idempotent — safe to re-run. If a migration trips on `ECONNRESET` over the tun
 again; completed migrations are skipped. Re-run it after any update that adds modules or model
 fields. (`db:sync-links` is included automatically by `db:migrate`.)
 
-> **Note on the seed:** the bundled `initial-data-seed.ts` migration script may fail with
-> `Providers (manual_manual) are not enabled for the service location`. That is seed *data*,
-> not schema — the backend still boots. Create the region / sales channel / stock location in
-> the admin (Section 7d) if the seed didn't populate them.
+> **Note on the seed:** on a fresh DB the bundled `initial-data-seed.ts` migration script seeds a
+> demo store (Europe/EUR region, a warehouse, and sample products). It is wrapped so a failure is
+> **logged but never blocks boot** — if it doesn't complete, create the region / sales channel /
+> stock location in the admin (Section 7d). On an already-seeded store it is skipped.
 
 ### 7b. Create the first admin user
 
+Run against the deployed container (adjust the container name for your platform):
+
 ```bash
-npx medusa user -e admin@acmeshop.com -p YourSecurePassword123
+docker exec -it <backend-container> sh -c "cd /app/.medusa/server && npx medusa user -e admin@acmeshop.com -p YourSecurePassword123"
 ```
 
 Then log in at `https://api.acmeshop.com/app`.
@@ -481,19 +495,17 @@ open https://shop.acmeshop.com                # should load the store
     → Cloudflare R2 (recommended) or self-hosted Garage
     → Create bucket, enable public access, note endpoint + access key + secret key
 
-4.  Coolify: create Backend app
+4.  Coolify/Dokploy: create Backend app
     → Build Pack: Dockerfile   Base Dir: apps/backend   Port: 9000   Build timeout: 3600
     → Set REQUIRED env vars (table 5a): DATABASE_URL, JWT_SECRET, COOKIE_SECRET, CORS
     → Env vars must be RUNTIME (uncheck "Is Build Time")
     → Set CORS vars to the new store's domains
     → Set all six S3_* vars (table 5b)
     → Deploy (one app at a time — don't build backend + storefront together)
+    → The container migrates on start; watch logs for "Running migrations" → "Server is ready"
+      (fallback if migrate stalls on your host: Section 7a tunnel method)
 
-5.  Migrations FROM LOCAL (never in the container — it hangs):
-    Terminal A:  ssh -L 15432:<pg-ip>:5432 <user>@<vps>
-    Terminal B:  cd apps/backend
-                 DATABASE_URL=postgres://USER:PASS@127.0.0.1:15432/DBNAME npx medusa db:migrate
-    Then create admin (against the running container is fine):
+5.  Create the admin user (against the running container):
                  docker exec -it <backend-id> sh -c "cd /app/.medusa/server && npx medusa user -e admin@... -p ..."
 
 6.  Admin → Settings → API Keys → create publishable key  → copy pk_...

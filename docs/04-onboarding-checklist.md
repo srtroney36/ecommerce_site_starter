@@ -45,11 +45,9 @@ from your deploy work to what the client sets up themselves in the admin.
 
 ### Database & first-run
 ```
-[ ] Migrations run FROM LOCAL over an SSH tunnel — NOT in the container (it hangs):
-    Terminal A:  ssh -L 15432:<pg-ip>:5432 <user>@<vps>
-    Terminal B:  cd apps/backend
-                 DATABASE_URL=postgres://USER:PASS@127.0.0.1:15432/DBNAME npx medusa db:migrate
-    (see docs/02-deployment.md §7a — this is the verified working method)
+[ ] Migrations ran automatically on deploy — check backend logs for
+    "Running migrations" → migrations applied → "Server is ready"
+    (fallback if migrate stalls on your host: docs/02-deployment.md §7a tunnel method)
 [ ] Admin user created: docker exec -it <backend-id> sh -c "cd /app/.medusa/server && npx medusa user -e admin@... -p ..."
 [ ] Admin login verified at https://api.acmeshop.com/app  (hard-refresh if cached)
 ```
