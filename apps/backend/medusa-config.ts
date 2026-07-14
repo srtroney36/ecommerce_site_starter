@@ -82,6 +82,9 @@ module.exports = defineConfig({
     {
       resolve: "./src/modules/productCost",
     },
+    {
+      resolve: "./src/modules/rbac",
+    },
     ...(hasS3
       ? [
           {
